@@ -1,0 +1,47 @@
+{
+  "listen": "0.0.0.0",
+  "port": 8765,
+  "token": "",
+  "tz_hours": 8,
+  "reset_hour": 4,
+  "scan_seconds": 300,
+
+  "groups": [
+    {
+      "name": "明日方舟",
+      "tasks": [
+        { "id": "ark.daily", "name": "日常", "cadence": "daily" }
+      ]
+    },
+    {
+      "name": "星穹铁道",
+      "tasks": [
+        { "id": "hsr.daily",     "name": "日常",         "cadence": "daily" },
+        { "id": "hsr.echo",      "name": "历战余响 x3",  "cadence": "weekly" },
+        { "id": "hsr.divergent", "name": "差分宇宙积分", "cadence": "weekly" }
+      ]
+    }
+  ],
+
+  "collectors": [
+    {
+      "type": "maa_wrapper",
+      "name": "MAA (run_maa.py)",
+      "log_dir": "C:\\path\\to\\maa-tools\\logs",
+      "profiles": { "maa run daily": "ark.daily" },
+      "default_task": "ark.daily",
+      "days": 14
+    },
+    {
+      "type": "march7th",
+      "name": "三月七",
+      "tool_dir": "D:\\Games\\March7thAssistant",
+      "daily_task": "hsr.daily",
+      "timestamps": {
+        "echo_of_war_timestamp": "hsr.echo",
+        "weekly_divergent_timestamp": "hsr.divergent"
+      },
+      "days": 14
+    }
+  ]
+}

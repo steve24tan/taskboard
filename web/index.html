@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TaskBoard</title>
+<style>
+:root {
+  --bg: #f6f6f3; --panel: #ffffff; --line: #e3e2dc; --text: #1d1d1b; --muted: #6b6a64;
+  --done: #2f7d4f; --done-bg: #e3f1e7; --partial: #9a6400; --partial-bg: #fbefd6;
+  --fail: #b3362b; --fail-bg: #f8e1de; --pending: #8a8983; --pending-bg: #eeede8;
+  --accent: #2c5d8f;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161615; --panel: #1f1f1d; --line: #33322f; --text: #ecebe6; --muted: #9b9a93;
+    --done: #6cc28e; --done-bg: #1d3326; --partial: #e2b04f; --partial-bg: #3a2e14;
+    --fail: #ec7b70; --fail-bg: #3d1f1c; --pending: #8d8c86; --pending-bg: #2a2a27;
+    --accent: #7fb0e0;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #161615; --panel: #1f1f1d; --line: #33322f; --text: #ecebe6; --muted: #9b9a93;
+  --done: #6cc28e; --done-bg: #1d3326; --partial: #e2b04f; --partial-bg: #3a2e14;
+  --fail: #ec7b70; --fail-bg: #3d1f1c; --pending: #8d8c86; --pending-bg: #2a2a27;
+  --accent: #7fb0e0;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
+main { max-width: 880px; margin: 0 auto; padding: 20px 16px 48px; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; margin-bottom: 18px; }
+h1 { font-size: 20px; margin: 0; }
+.sub { color: var(--muted); font-size: 13px; }
+.spacer { flex: 1; }
+button { font: inherit; font-size: 13px; color: var(--accent); background: none; border: 1px solid var(--line);
+  border-radius: 6px; padding: 3px 10px; cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button:disabled { opacity: .5; cursor: default; }
+.summary { font-size: 28px; font-weight: 600; margin: 0 0 2px; font-variant-numeric: tabular-nums; }
+.summary small { font-size: 14px; font-weight: 400; color: var(--muted); }
+section { margin-top: 22px; }
+h2 { font-size: 14px; color: var(--muted); font-weight: 600; margin: 0 0 8px; letter-spacing: .02em; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px;
+  margin-bottom: 8px; }
+.row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.name { font-weight: 600; }
+.chip { font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 99px; padding: 0 8px; }
+.pill { font-size: 13px; font-weight: 600; border-radius: 99px; padding: 1px 10px; white-space: nowrap; }
+.s-done { color: var(--done); background: var(--done-bg); }
+.s-partial { color: var(--partial); background: var(--partial-bg); }
+.s-fail { color: var(--fail); background: var(--fail-bg); }
+.s-pending { color: var(--pending); background: var(--pending-bg); }
+.detail { color: var(--muted); font-size: 13px; margin-top: 4px; overflow-wrap: anywhere; }
+.hist { display: flex; gap: 3px; margin-top: 10px; flex-wrap: wrap; }
+.hist i { width: 18px; height: 18px; border-radius: 4px; display: block; font-style: normal; font-size: 11px;
+  line-height: 18px; text-align: center; }
+.hist i.now { outline: 2px solid var(--accent); outline-offset: 1px; }
+.hist-labels { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-top: 2px; }
+.health li, .recent li { font-size: 13px; margin: 3px 0; }
+ul { margin: 0; padding-left: 18px; }
+.bad { color: var(--fail); }
+.mono { font-variant-numeric: tabular-nums; }
+details summary { cursor: pointer; color: var(--muted); font-size: 14px; font-weight: 600; }
+.err { color: var(--fail); font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>TaskBoard</h1>
+    <span class="sub" id="day"></span>
+    <span class="spacer"></span>
+    <button id="scan">重新扫描</button>
+  </header>
+  <p class="summary" id="summary">…</p>
+  <div class="sub" id="reset"></div>
+  <div class="err" id="err"></div>
+  <div id="groups"></div>
+  <section>
+    <h2>数据来源</h2>
+    <div class="card"><ul class="health" id="health"></ul></div>
+  </section>
+  <section>
+    <details>
+      <summary>最近事件</summary>
+      <div class="card" style="margin-top:8px"><ul class="recent" id="recent"></ul></div>
+    </details>
+  </section>
+</main>
+<script>
+const STATE = {
+  done:    { text: "已完成", mark: "✓" },
+  partial: { text: "部分完成", mark: "~" },
+  fail:    { text: "失败", mark: "✕" },
+  pending: { text: "未跑", mark: "·" },
+};
+const CAD = { daily: "每日", weekly: "每周", monthly: "每月" };
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const pad = (n) => String(n).padStart(2, "0");
+function fmt(ts, withDate) {
+  const d = new Date(ts * 1000);
+  const t = pad(d.getHours()) + ":" + pad(d.getMinutes());
+  return withDate ? (d.getMonth() + 1) + "/" + d.getDate() + " " + t : t;
+}
+function left(sec) {
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);
+  return h ? h + " 小时 " + m + " 分" : m + " 分";
+}
+let last = null;
+
+function render(st) {
+  last = st;
+  const all = st.groups.flatMap((g) => g.tasks);
+  const cur = all.filter((t) => t.cadence === "daily");
+  const done = cur.filter((t) => t.current.state === "done").length;
+  const wk = all.filter((t) => t.cadence === "weekly");
+  const wkDone = wk.filter((t) => t.current.state === "done").length;
+  $("summary").innerHTML = `${done}/${cur.length} <small>今日日常完成</small>` +
+    (wk.length ? ` &nbsp; ${wkDone}/${wk.length} <small>本周</small>` : "");
+  const firstDaily = cur[0] || all[0];
+  if (firstDaily) {
+    $("day").textContent = "服务器日 " + firstDaily.current.label;
+    $("reset").textContent = "下次每日重置 " + fmt(firstDaily.next_reset, true) +
+      "（还有 " + left(firstDaily.next_reset - st.now) + "）";
+  }
+  $("groups").innerHTML = st.groups.map((g) => `
+    <section><h2>${esc(g.name)}</h2>${g.tasks.map(card).join("")}</section>`).join("");
+  const hs = Object.entries(st.health);
+  $("health").innerHTML = hs.length ? hs.map(([n, h]) =>
+    `<li class="${h.ok ? "" : "bad"}">${h.ok ? "✓" : "✕"} <b>${esc(n)}</b> ${esc(h.message)}
+     <span class="sub mono">· 扫描于 ${fmt(h.last_scan)}</span></li>`).join("") : "<li>还没扫描</li>";
+  $("recent").innerHTML = st.recent.length ? st.recent.map((e) =>
+    `<li><span class="mono">${fmt(e.ts, true)}</span> <span class="pill s-${e.status === "undone" ? "pending" : e.status}">${
+      e.status === "undone" ? "取消标记" : (STATE[e.status] || {}).text || e.status}</span>
+     ${esc(e.task_name)} <span class="sub">${esc(e.detail)} · ${esc(e.source)}</span></li>`).join("") : "<li>没有事件</li>";
+}
+
+function card(t) {
+  const c = t.current, s = STATE[c.state];
+  const when = c.ts ? (c.manual ? "手动标记 " : "") + fmt(c.ts, t.cadence !== "daily") : "";
+  const detail = [when, c.manual ? "" : c.detail].filter(Boolean).join(" · ");
+  const hist = t.history.map((h, i) => {
+    const hs = STATE[h.state];
+    const tip = `${h.label} ${hs.text}${h.detail ? " · " + h.detail : ""}`;
+    return `<i class="s-${h.state}${i === t.history.length - 1 ? " now" : ""}" title="${esc(tip)}" aria-label="${esc(tip)}">${hs.mark}</i>`;
+  }).join("");
+  const tickLabel = c.state === "done" ? "取消标记" : "标记完成";
+  return `<div class="card">
+    <div class="row">
+      <span class="name">${esc(t.name)}</span><span class="chip">${CAD[t.cadence]}</span>
+      <span class="pill s-${c.state}">${s.mark} ${s.text}</span>
+      <span class="spacer"></span>
+      <button data-task="${esc(t.id)}" data-done="${c.state !== "done"}">${tickLabel}</button>
+    </div>
+    ${detail ? `<div class="detail">${esc(detail)}</div>` : ""}
+    <div class="hist">${hist}</div>
+    <div class="hist-labels"><span>${esc(t.history[0].label)}</span><span>${t.cadence === "daily" ? "今天" : "本期"}</span></div>
+  </div>`;
+}
+
+async function load() {
+  try {
+    const r = await fetch("/api/status");
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    render(await r.json());
+    $("err").textContent = "";
+  } catch (e) {
+    $("err").textContent = "连不到 TaskBoard 服务：" + e.message;
+  }
+}
+
+async function post(path, body) {
+  const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status);
+}
+
+document.addEventListener("click", async (ev) => {
+  const b = ev.target.closest("button[data-task]");
+  if (!b) return;
+  b.disabled = true;
+  try { await post("/api/tick", { task: b.dataset.task, done: b.dataset.done === "true" }); await load(); }
+  catch (e) { $("err").textContent = "标记失败：" + e.message; b.disabled = false; }
+});
+$("scan").addEventListener("click", async () => {
+  $("scan").disabled = true;
+  try { await post("/api/scan"); await load(); }
+  catch (e) { $("err").textContent = "扫描失败：" + e.message; }
+  $("scan").disabled = false;
+});
+load();
+setInterval(load, 60000);
+</script>
+</body>
+</html>
