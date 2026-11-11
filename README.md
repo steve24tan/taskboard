@@ -36,8 +36,24 @@ python taskboard.py                    # 开 dashboard: http://localhost:8765
 | `maa_wrapper` | `maa-tools/logs/YYYY-MM-DD.log`(run_maa.py 写的) | `跑 MAA: <命令>` 用 `profiles` 对应到任务;`OK 完成` = 完成,`X ...` = 失败 |
 | `march7th` | 三月七目录的 `logs/YYYY-MM-DD.log` 和 `config.yaml` | 日志:`开始运行` … `停止运行` 一轮,中间有 `发生错误` = 失败、`清体力未完成` 之类 = 部分完成;周本:`config.yaml` 的 `echo_of_war_timestamp` 等时间戳(三月七完成时自己写的) |
 
+| `maa_autorun` | `run_dailies.ps1` 写的 `autorun_YYYYMMDD.log`,行首 `[日期 时间] <账号> :` | `accounts` 把账号(TW / Global …)对应到任务;`all daily tasks completed` = 完成,`these failed: …` = 部分完成,超时 / `NOT stamped done` = 失败 |
+| `csv_dates` | 任意 CSV(例:`episode_log.csv`) | `date_column` 有日期的每一行 = 一次完成(只有日期时算当天 12:00) |
+| `csv_due` | 同上 | 日期过了 `due_days` 天,`require_columns` 还有空格 = 失败(列出 `key_column`);没有到期未补的 = 完成。每次扫描记一笔快照,任务要配 `"resolve": "latest"` |
+| `github_runs` | `gh run list`(GitHub CLI,用 `gh auth login` 的账号,私有 repo 也行) | 某个 workflow 的 `success` = 完成,`failure` / 超时 = 失败;取消和没跑完的不算。最多每 `every_seconds`(默认 3600)叫一次 gh |
+| `http_ping` | 一个 URL | 不产生任务,只在「数据来源」显示服务在不在线(有任何 HTTP 回应就算在线) |
+
 三月七日志标记沿用 [sheinlee/daily-hub](https://github.com/sheinlee/daily-hub)(MIT)对 v2026.7.26 的验证。
 三月七改版后标记可能变,`--once` 和 dashboard 底下「数据来源」会显示读了几个日志、缺哪个 key。
+任何 collector 加 `"enabled": false` 就先不扫。
+
+## 任务选项
+
+| 键 | 默认 | 说明 |
+|---|---|---|
+| `cadence` | `daily` | `daily` / `weekly`(周一重置)/ `monthly` |
+| `reset_hour` | 群组或全局的 `reset_hour` | 几点重置 |
+| `target` | `1` | 这一期要几次「完成」。不够就是部分完成,显示 `1/2` |
+| `resolve` | `best` | `best` = 这一期最好的一次结果;`latest` = 最新那一次(给 `csv_due` 这种快照用) |
 
 ## 其他东西也想上板
 

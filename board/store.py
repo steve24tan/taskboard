@@ -62,18 +62,35 @@ class Store:
                 "SELECT * FROM events ORDER BY ts DESC LIMIT ?", (limit,))]
 
 
-def resolve(events: list[dict]) -> dict:
-    """State of one task in one period from its events (sorted by ts)."""
+def resolve(events: list[dict], target: int = 1, latest: bool = False) -> dict:
+    """State of one task in one period from its events (sorted by ts).
+
+    target  >1: the task needs that many automatic "done" events in the period; fewer is
+            "partial" and the result carries progress "k/N".
+    latest  the newest automatic event decides instead of the best one (for snapshot
+            collectors whose later reading replaces the earlier one).
+    """
     manual = [e for e in events if e["source"] == "manual"]
     if manual:
         m = manual[-1]
-        return {"state": "done" if m["status"] == "done" else "pending", "event": m, "manual": True}
-    best = None
-    for e in events:
-        r = RANK.get(e["status"], 0)
-        if r and (best is None or r > RANK[best["status"]] or
-                  (r == RANK[best["status"]] and e["ts"] > best["ts"])):
-            best = e
+        return {"state": "done" if m["status"] == "done" else "pending", "event": m, "manual": True,
+                "progress": None}
+    auto = [e for e in events if e["status"] in RANK]
+    progress = None
+    if target > 1:
+        done = [e for e in auto if e["status"] == "done"]
+        progress = "%d/%d" % (len(done), target)
+        if done:
+            return {"state": "done" if len(done) >= target else "partial", "event": done[-1],
+                    "manual": False, "progress": progress}
+    if latest:
+        best = auto[-1] if auto else None
+    else:
+        best = None
+        for e in auto:
+            r = RANK[e["status"]]
+            if best is None or r > RANK[best["status"]] or (r == RANK[best["status"]] and e["ts"] > best["ts"]):
+                best = e
     if best is None:
-        return {"state": "pending", "event": None, "manual": False}
-    return {"state": best["status"], "event": best, "manual": False}
+        return {"state": "pending", "event": None, "manual": False, "progress": progress}
+    return {"state": best["status"], "event": best, "manual": False, "progress": progress}

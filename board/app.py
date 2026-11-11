@@ -20,16 +20,22 @@ HISTORY = {"daily": 14, "weekly": 8, "monthly": 6}
 class Board:
     def __init__(self, cfg: dict, db_path: str):
         self.cfg = cfg
-        self.store = Store(db_path)
         self.tz = float(cfg.get("tz_hours", 8))
         self.tasks = {}
         for g in cfg.get("groups", []):
             for t in g.get("tasks", []):
                 t.setdefault("cadence", "daily")
                 t.setdefault("reset_hour", g.get("reset_hour", cfg.get("reset_hour", 4)))
+                t.setdefault("target", 1)
+                t.setdefault("resolve", "best")
                 if t["cadence"] not in periods.CADENCES:
                     raise ValueError("task %s: bad cadence %r" % (t["id"], t["cadence"]))
+                if t["resolve"] not in ("best", "latest"):
+                    raise ValueError("task %s: resolve must be best or latest" % t["id"])
+                if int(t["target"]) < 1:
+                    raise ValueError("task %s: target must be >= 1" % t["id"])
                 self.tasks[t["id"]] = t
+        self.store = Store(db_path)   # opened only once the config is valid
         self.health = {}
         self._scan_lock = threading.Lock()
 
@@ -68,13 +74,14 @@ class Board:
         cad, rh = t["cadence"], int(t["reset_hour"])
         hist = []
         for start, end in periods.recent_periods(now, cad, HISTORY[cad], rh, self.tz):
-            r = resolve(self.store.events(t["id"], start, end))
+            r = resolve(self.store.events(t["id"], start, end), int(t["target"]), t["resolve"] == "latest")
             ev = r["event"]
+            detail = " · ".join(x for x in (r["progress"], ev["detail"] if ev else "") if x)
             hist.append({"label": periods.label(start, cad, self.tz), "start": start, "end": end,
                          "state": r["state"], "manual": r["manual"],
-                         "ts": ev["ts"] if ev else None, "detail": ev["detail"] if ev else ""})
+                         "ts": ev["ts"] if ev else None, "detail": detail})
         cur = hist[-1]
-        return {"id": t["id"], "name": t["name"], "cadence": cad, "reset_hour": rh,
+        return {"id": t["id"], "name": t["name"], "cadence": cad, "reset_hour": rh, "target": int(t["target"]),
                 "current": cur, "next_reset": cur["end"], "history": hist}
 
     def status(self) -> dict:
