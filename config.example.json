@@ -20,6 +20,14 @@
         { "id": "hsr.echo",      "name": "历战余响 x3",  "cadence": "weekly" },
         { "id": "hsr.divergent", "name": "差分宇宙积分", "cadence": "weekly" }
       ]
+    },
+    {
+      "name": "GA 频道",
+      "tasks": [
+        { "id": "ga.post", "name": "本周发 2 条 Short", "cadence": "weekly", "target": 2 },
+        { "id": "ga.d7",   "name": "D7 数据回填",       "cadence": "weekly", "resolve": "latest" },
+        { "id": "ga.meta", "name": "Meta 周报重建",     "cadence": "weekly" }
+      ]
     }
   ],
 
@@ -42,6 +50,47 @@
         "weekly_divergent_timestamp": "hsr.divergent"
       },
       "days": 14
+    },
+    {
+      "type": "maa_autorun",
+      "name": "MAA (run_dailies.ps1)",
+      "enabled": false,
+      "log_dir": "C:\\path\\to\\Arknights",
+      "accounts": { "TW": "ark.daily" },
+      "days": 14
+    },
+    {
+      "type": "csv_dates",
+      "name": "发布记录",
+      "path": "C:\\path\\to\\GA_Channel_Ops\\episode_log.csv",
+      "task": "ga.post",
+      "date_column": "posted_date",
+      "key_column": "ep",
+      "detail_columns": ["ep", "title_en"],
+      "days": 90
+    },
+    {
+      "type": "csv_due",
+      "name": "D7 回填",
+      "path": "C:\\path\\to\\GA_Channel_Ops\\episode_log.csv",
+      "task": "ga.d7",
+      "date_column": "posted_date",
+      "key_column": "ep",
+      "require_columns": ["yt_views_d7"],
+      "due_days": 7
+    },
+    {
+      "type": "github_runs",
+      "name": "ga-meta CI",
+      "repo": "owner/ga-meta",
+      "workflow": "build.yml",
+      "task": "ga.meta",
+      "every_seconds": 3600
+    },
+    {
+      "type": "http_ping",
+      "name": "AiCut",
+      "url": "http://127.0.0.1:4317/"
     }
   ]
 }

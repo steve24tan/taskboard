@@ -15,7 +15,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from board import periods  # noqa: E402
 from board.app import Board, make_handler  # noqa: E402
-from board.collectors import collect_march7th, collect_maa_wrapper  # noqa: E402
+from board import collectors  # noqa: E402
+from board.collectors import (collect_csv_dates, collect_csv_due, collect_github_runs,  # noqa: E402
+                              collect_http_ping, collect_maa_autorun, collect_march7th,
+                              collect_maa_wrapper)
 from board.store import resolve  # noqa: E402
 
 CN = timezone(timedelta(hours=8))
@@ -102,6 +105,22 @@ class ResolveTests(unittest.TestCase):
     def test_empty(self):
         self.assertEqual(resolve([])["state"], "pending")
 
+    def test_target_counts_done_events(self):
+        one = [self.ev(1, "done")]
+        two = one + [self.ev(2, "fail"), self.ev(3, "done")]
+        self.assertEqual((resolve(one, 2)["state"], resolve(one, 2)["progress"]), ("partial", "1/2"))
+        self.assertEqual((resolve(two, 2)["state"], resolve(two, 2)["progress"]), ("done", "2/2"))
+        r = resolve([self.ev(1, "fail")], 2)
+        self.assertEqual((r["state"], r["progress"]), ("fail", "0/2"))
+        self.assertEqual(resolve([], 2)["progress"], "0/2")
+        self.assertIsNone(resolve(one)["progress"])
+
+    def test_latest(self):
+        evs = [self.ev(1, "done"), self.ev(2, "fail")]
+        self.assertEqual(resolve(evs)["state"], "done")
+        self.assertEqual(resolve(evs, latest=True)["state"], "fail")
+        self.assertEqual(resolve(evs + [self.ev(3, "done", "manual")], latest=True)["state"], "done")
+
 
 class CollectorTests(unittest.TestCase):
     def setUp(self):
@@ -150,6 +169,100 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(events[0]["detail"], "清体力未完成")
         self.assertEqual(events[2]["ts"], 1762700000.5)
         self.assertIn("currencywars_timestamp", health["message"])
+
+    def test_maa_autorun(self):
+        d = date.today().strftime("%Y%m%d")
+        day = TODAY
+        write(os.path.join(self.root, "autorun_%s.log" % d), "﻿" + "\n".join([
+            "[%s 00:20:00] ========== dual-account daily autorun START ==========" % day,
+            "[%s 00:21:00] TW : launching MAA (timeout=45 min)" % day,
+            "[%s 00:40:00] TW : all daily tasks completed [OK]" % day,
+            "[%s 00:41:00] Global : task chain finished, but these failed: Fight, Mall [WARN]" % day,
+            "[%s 00:42:00] Global : retry attempt 2 of 2" % day,
+            "[%s 01:00:00] Global : did not finish before timeout [WARN] forcing cleanup" % day,
+            "[%s 01:01:00] Global : NOT stamped done -- wrote needs_sup_Global.txt for the supervisor" % day,
+            "[%s 01:02:00] JP : all daily tasks completed [OK]" % day,
+            "[%s 01:03:00] TW : already done for game-day %s, skipping" % (day, day),
+        ]) + "\n")
+        write(os.path.join(self.root, "autorun_19990101.log"), "[1999-01-01 00:00:00] TW : all daily tasks completed [OK]\n")
+        events, health = collect_maa_autorun({"log_dir": self.root, "accounts": {"TW": "ark.tw", "Global": "ark.gl"}})
+        self.assertTrue(health["ok"])
+        self.assertEqual([(e["task"], e["status"], e["detail"]) for e in events], [
+            ("ark.tw", "done", "完成"),
+            ("ark.gl", "partial", "没做完: Fight, Mall"),
+            ("ark.gl", "fail", "超时"),
+            ("ark.gl", "fail", "没完成，交给 supervisor"),
+        ])
+        self.assertEqual(events[0]["ts"], collectors._local_ts(day, "00:40:00"))
+        self.assertFalse(collect_maa_autorun({"log_dir": os.path.join(self.root, "nope")})[1]["ok"])
+
+    def csv(self, rows):
+        path = os.path.join(self.root, "episode_log.csv")
+        write(path, "﻿ep,title_en,posted_date,yt_views_d7\n" + "".join(r + "\n" for r in rows))
+        return path
+
+    def test_csv_dates(self):
+        recent = (date.today() - timedelta(days=2)).isoformat()
+        path = self.csv(["ep01,Welcome,%s 18:30,1200" % recent, "ep02,At Your Service,,", "ep00,Old,2001-01-01,"])
+        events, health = collect_csv_dates({"path": path, "task": "ga.post", "date_column": "posted_date",
+                                            "key_column": "ep", "detail_columns": ["ep", "title_en"]})
+        self.assertTrue(health["ok"])
+        self.assertEqual([(e["task"], e["status"], e["detail"]) for e in events], [("ga.post", "done", "ep01 Welcome")])
+        self.assertEqual(datetime.fromtimestamp(events[0]["ts"]).strftime("%H:%M"), "18:30")
+        _, h = collect_csv_dates({"path": path, "task": "t", "date_column": "nope"})
+        self.assertFalse(h["ok"])
+        self.assertFalse(collect_csv_dates({"path": path + ".x", "task": "t", "date_column": "d"})[1]["ok"])
+
+    def test_csv_due(self):
+        old = (date.today() - timedelta(days=9)).isoformat()
+        fresh = (date.today() - timedelta(days=2)).isoformat()
+        cfg = {"task": "ga.d7", "date_column": "posted_date", "key_column": "ep",
+               "require_columns": ["yt_views_d7"], "due_days": 7}
+        cfg["path"] = self.csv(["ep01,A,%s,1200" % old, "ep02,B,%s," % old, "ep03,C,%s," % fresh])
+        (e,), h = collect_csv_due(cfg)
+        self.assertEqual((e["status"], e["detail"]), ("fail", "待补: ep02"))
+        self.assertIn("2 行到期", h["message"])
+        cfg["path"] = self.csv(["ep01,A,%s,1200" % old, "ep02,B,%s,800" % old, "ep03,C,%s," % fresh])
+        (e2,), _ = collect_csv_due(cfg)
+        self.assertEqual((e2["status"], e2["detail"]), ("done", "都补了（2 行到期）"))
+        self.assertNotEqual(e["key"], e2["key"])
+        cfg["path"] = self.csv([])
+        self.assertEqual(collect_csv_due(cfg)[0][0]["detail"], "还没有到期的")
+
+    def test_github_runs(self):
+        out = json.dumps([
+            {"databaseId": 1, "conclusion": "success", "status": "completed", "updatedAt": "2026-11-09T09:20:00Z", "event": "schedule"},
+            {"databaseId": 2, "conclusion": "failure", "status": "completed", "updatedAt": "2026-11-02T09:20:00Z", "event": "schedule"},
+            {"databaseId": 3, "conclusion": "cancelled", "status": "completed", "updatedAt": "2026-11-01T09:20:00Z", "event": "push"},
+            {"databaseId": 4, "conclusion": "", "status": "in_progress", "updatedAt": "2026-11-10T09:20:00Z", "event": "schedule"},
+        ])
+        calls = []
+
+        class P:
+            returncode, stdout, stderr = 0, out, ""
+
+        real = collectors.subprocess.run
+        collectors.subprocess.run = lambda cmd, **kw: calls.append(cmd) or P
+        collectors._GH_CACHE.clear()
+        try:
+            cfg = {"repo": "me/meta", "workflow": "build.yml", "task": "ga.meta"}
+            events, health = collect_github_runs(cfg)
+            self.assertEqual([(e["status"], e["key"]) for e in events], [("done", "gh:me/meta:1"), ("fail", "gh:me/meta:2")])
+            self.assertEqual(events[0]["ts"], datetime(2026, 11, 9, 9, 20, tzinfo=timezone.utc).timestamp())
+            self.assertTrue(health["ok"])
+            collect_github_runs(cfg)
+            self.assertEqual(len(calls), 1)                       # second call served from cache
+            P.returncode, P.stderr = 1, "HTTP 404: Not Found\n"
+            collectors._GH_CACHE.clear()
+            self.assertEqual(collect_github_runs(cfg), ([], {"ok": False, "message": "gh: HTTP 404: Not Found"}))
+        finally:
+            collectors.subprocess.run = real
+            collectors._GH_CACHE.clear()
+
+    def test_http_ping_down(self):
+        events, health = collect_http_ping({"url": "http://127.0.0.1:9/", "timeout": 1})
+        self.assertEqual(events, [])
+        self.assertFalse(health["ok"])
 
 
 class ServerTests(unittest.TestCase):
@@ -213,6 +326,23 @@ class ServerTests(unittest.TestCase):
         self.assertFalse(self.call("/api/event", {"task": "study", "key": "k1"}, hdr)[1]["added"])
         _, st = self.call("/api/status")
         self.assertEqual(self.task(st, "study")["current"]["state"], "partial")
+
+    def test_target_progress_and_ping(self):
+        cfg = {"groups": [{"name": "G", "tasks": [
+            {"id": "post", "name": "发片", "cadence": "weekly", "target": 2}]}],
+            "collectors": [{"type": "http_ping", "name": "self", "url": self.base + "/nope"}]}
+        board = Board(cfg, os.path.join(self.tmp.name, "t.db"))
+        try:
+            board.store.add("post", time.time(), "done", "ep01", "api", "k1")
+            board.scan()
+            self.assertTrue(board.health["self"]["ok"])           # a 404 still means the server is up
+            cur = board.status()["groups"][0]["tasks"][0]["current"]
+            self.assertEqual((cur["state"], cur["detail"]), ("partial", "1/2 · ep01"))
+            with self.assertRaises(ValueError):
+                Board({"groups": [{"name": "G", "tasks": [{"id": "x", "name": "x", "target": 0}]}]},
+                      os.path.join(self.tmp.name, "u.db"))
+        finally:
+            board.store._db.close()
 
     def test_page(self):
         with urllib.request.urlopen(self.base + "/", timeout=5) as r:
